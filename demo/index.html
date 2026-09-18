@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Patera Alert — Demo standalone</title>
+<!--
+  Patera Alert — demo standalone (SPEC §4)
+  Leaflet 1.9 (CDN) + tiles CartoDB Voyager + Open-Meteo en vivo + ../motor.js
+  Herramienta humanitaria de anticipación logística. No localiza embarcaciones
+  ni personas. Prototipo en validación.
+
+  Servir desde la raíz del proyecto, p.ej.:
+    cd patera-alert && python3 -m http.server 8080
+  y abrir http://localhost:8080/demo/
+-->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    /* Paleta sobria tierra/arena/oliva de baja saturación */
+    --arena: #f3efe3;
+    --arena-clara: #faf7ee;
+    --borde: #d7cfba;
+    --tinta: #3b382e;
+    --tinta-suave: #6d675a;
+    --oliva: #6f7a4e;
+    --oliva-oscuro: #57603c;
+    --verde: #5b7f57;
+    --ambar: #bf8a3c;
+    --rojo: #a94438;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: Georgia, 'Times New Roman', serif;
+    color: var(--tinta);
+    background: var(--arena);
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 10px 16px;
+    background: var(--arena-clara);
+    border-bottom: 1px solid var(--borde);
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 20px; margin: 0; color: var(--oliva-oscuro); letter-spacing: 0.5px; }
+  header .sub { font-size: 13px; color: var(--tinta-suave); }
+  #principal { flex: 1; display: flex; min-height: 0; }
+  #mapa { flex: 1; min-width: 0; }
+  aside {
+    width: 340px;
+    overflow-y: auto;
+    background: var(--arena-clara);
+    border-left: 1px solid var(--borde);
+    padding: 14px;
+    font-size: 14px;
+  }
+  aside h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--oliva-oscuro); border-bottom: 1px solid var(--borde);
+    padding-bottom: 4px; margin: 18px 0 8px;
+  }
+  aside h2:first-child { margin-top: 0; }
+  .semaforo { display: flex; flex-direction: column; gap: 6px; }
+  .isla {
+    display: grid;
+    grid-template-columns: 14px 1fr auto;
+    gap: 8px; align-items: center;
+    padding: 6px 8px;
+    background: var(--arena);
+    border: 1px solid var(--borde);
+    border-radius: 4px;
+  }
+  .punto-rag { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.25); }
+  .isla .nombre { font-weight: bold; font-size: 13px; }
+  .isla .probs { font-size: 12px; color: var(--tinta-suave); font-variant-numeric: tabular-nums; }
+  .rag-verde { background: var(--verde); }
+  .rag-ambar { background: var(--ambar); }
+  .rag-rojo { background: var(--rojo); }
+  ul#alertas { margin: 0; padding-left: 18px; }
+  ul#alertas li { margin-bottom: 6px; line-height: 1.35; }
+  .leyenda-fila { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 13px; }
+  .muestra { width: 22px; height: 12px; border-radius: 2px; border: 1px solid rgba(0,0,0,0.2); }
+  .muestra-linea { height: 0; border-top: 3px solid var(--oliva-oscuro); border-radius: 0; }
+  .muestra-discontinua { border-top-style: dashed; }
+  label.toggle { display: block; margin-bottom: 4px; font-size: 13px; cursor: pointer; }
+  #estado { font-size: 13px; color: var(--tinta-suave); font-style: italic; }
+  #generado { font-size: 12px; color: var(--tinta-suave); }
+  button#refrescar {
+    background: var(--oliva); color: #fff; border: none; border-radius: 4px;
+    padding: 6px 12px; font-family: inherit; font-size: 13px; cursor: pointer;
+  }
+  button#refrescar:hover { background: var(--oliva-oscuro); }
+  footer {
+    padding: 8px 16px;
+    background: var(--arena-clara);
+    border-top: 1px solid var(--borde);
+    font-size: 12px;
+    color: var(--tinta-suave);
+    text-align: center;
+  }
+  .tooltip-destino {
+    background: var(--arena-clara);
+    border: 1px solid var(--borde);
+    font-family: Georgia, serif;
+    font-size: 12px;
+  }
+  @media (max-width: 800px) {
+    #principal { flex-direction: column; }
+    aside { width: 100%; border-left: none; border-top: 1px solid var(--borde); }
+    #mapa { min-height: 55vh; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Patera Alert</h1>
+  <span class="sub">Alerta temprana 24–72 h · Ruta Argelia → Baleares · Prototipo</span>
+</header>
+
+<div id="principal">
+  <div id="mapa"></div>
+  <aside>
+    <h2>Estado</h2>
+    <div id="estado">Cargando meteo de Open-Meteo…</div>
+    <div id="generado"></div>
+    <p><button id="refrescar">Recalcular</button></p>
+
+    <h2>Semáforo por isla</h2>
+    <div class="semaforo" id="semaforo"></div>
+
+    <h2>Alertas</h2>
+    <ul id="alertas"></ul>
+
+    <h2>Capas</h2>
+    <label class="toggle"><input type="checkbox" id="capa-salidas" checked> Puntos de salida</label>
+    <label class="toggle"><input type="checkbox" id="capa-corredores" checked> Corredores activos</label>
+    <label class="toggle"><input type="checkbox" id="capa-destinos" checked> Destinos (RAG)</label>
+
+    <h2>Leyenda</h2>
+    <div class="leyenda-fila"><span class="muestra" style="background:var(--verde)"></span> Verde: p24 &lt; 0.15</div>
+    <div class="leyenda-fila"><span class="muestra" style="background:var(--ambar)"></span> Ámbar: p24 0.15–0.40</div>
+    <div class="leyenda-fila"><span class="muestra" style="background:var(--rojo)"></span> Rojo: p24 &gt; 0.40</div>
+    <div class="leyenda-fila"><span class="muestra" style="background:var(--oliva)"></span> Punto de salida (tamaño/color = score de ventana)</div>
+    <div class="leyenda-fila"><span class="muestra muestra-linea"></span> Corredor activo</div>
+    <div class="leyenda-fila"><span class="muestra muestra-linea muestra-discontinua"></span> Corredor con riesgo de deriva</div>
+  </aside>
+</div>
+
+<footer>
+  Herramienta humanitaria de anticipación logística. No localiza embarcaciones ni personas. Prototipo en validación.
+</footer>
+
+<!-- Leaflet vendoreado en local (vendor/) para no depender de CDN -->
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="../motor.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  if (typeof L === 'undefined') {
+    document.getElementById('estado').textContent =
+      'Error: no se pudo cargar Leaflet (vendor/leaflet.js). Sirve la carpeta completa del proyecto.';
+    return;
+  }
+  if (typeof PateraEngine === 'undefined') {
+    document.getElementById('estado').textContent =
+      'Error: no se pudo cargar ../motor.js.';
+    return;
+  }
+
+  var CFG = PateraEngine.PATERA_CONFIG;
+  var COLORES_RAG = { verde: '#5b7f57', ambar: '#bf8a3c', rojo: '#a94438' };
+
+  /* ---------------------------------------------------------------- *
+   * Mapa Leaflet: vista inicial del Mediterráneo occidental
+   * ---------------------------------------------------------------- */
+  var mapa = L.map('mapa', { zoomControl: true }).setView([38.1, 2.2], 7);
+  // Proveedor principal CartoDB Voyager; si un tile falla (red sin acceso
+  // a Carto), se cambia automáticamente a OSM estándar como respaldo.
+  var capaBase = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 19
+  });
+  var respaldoUsado = false;
+  capaBase.on('tileerror', function () {
+    if (respaldoUsado) return;
+    respaldoUsado = true;
+    mapa.removeLayer(capaBase);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      maxZoom: 19
+    }).addTo(mapa);
+  });
+  capaBase.addTo(mapa);
+
+  var capaSalidas = L.layerGroup().addTo(mapa);
+  var capaCorredores = L.layerGroup().addTo(mapa);
+  var capaDestinos = L.layerGroup().addTo(mapa);
+
+  /* ---------------------------------------------------------------- *
+   * Fetcher Open-Meteo con batching y caché por celda de 0.25°
+   *
+   * Open-Meteo acepta arrays de latitudes/longitudes en una sola
+   * llamada; se recogen todos los puntos necesarios (salidas, destinos
+   * y puntos medios de corredor) y se descargan en 2 peticiones.
+   * Nota: ocean_current_velocity viene en km/h -> se pasa a m/s.
+   * ---------------------------------------------------------------- */
+  var CELDA = 0.25;
+  function claveCelda(lat, lon) {
+    return (Math.round(lat / CELDA) * CELDA).toFixed(2) + ',' +
+           (Math.round(lon / CELDA) * CELDA).toFixed(2);
+  }
+
+  var cacheMarine = {};   // claveCelda -> serie horaria marina
+  var cacheViento = {};   // claveCelda -> serie horaria de viento
+
+  function puntosNecesarios() {
+    var pts = [];
+    CFG.puntosSalida.forEach(function (p) { pts.push([p.lat, p.lon]); });
+    CFG.destinos.forEach(function (d) { pts.push([d.lat, d.lon]); });
+    CFG.puntosSalida.forEach(function (p) {
+      var m = CFG.matriz[p.id] || {};
+      Object.keys(m).forEach(function (destId) {
+        var d = CFG.destinos.filter(function (x) { return x.id === destId; })[0];
+        if (d) pts.push([(p.lat + d.lat) / 2, (p.lon + d.lon) / 2]);
+      });
+    });
+    return pts;
+  }
+
+  function descargarMeteo() {
+    // Dedupe por celda redondeada
+    var celdas = {};
+    puntosNecesarios().forEach(function (pt) {
+      var clave = claveCelda(pt[0], pt[1]);
+      if (!celdas[clave]) {
+        celdas[clave] = {
+          lat: Math.round(pt[0] / CELDA) * CELDA,
+          lon: Math.round(pt[1] / CELDA) * CELDA
+        };
+      }
+    });
+    var lista = Object.keys(celdas).map(function (k) { return celdas[k]; });
+    var lats = lista.map(function (c) { return c.lat.toFixed(2); }).join(',');
+    var lons = lista.map(function (c) { return c.lon.toFixed(2); }).join(',');
+
+    var urlMarine = 'https://marine-api.open-meteo.com/v1/marine?latitude=' + lats +
+      '&longitude=' + lons +
+      '&hourly=wave_height,wave_period,wave_direction,ocean_current_velocity,ocean_current_direction' +
+      '&forecast_days=4&timezone=UTC';
+    var urlViento = 'https://api.open-meteo.com/v1/forecast?latitude=' + lats +
+      '&longitude=' + lons +
+      '&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=kn' +
+      '&forecast_days=4&timezone=UTC';
+
+    function normalizar(resp) { return Array.isArray(resp) ? resp : [resp]; }
+
+    return Promise.all([
+      fetch(urlMarine).then(function (r) { return r.json(); }),
+      fetch(urlViento).then(function (r) { return r.json(); })
+    ]).then(function (par) {
+      var mar = normalizar(par[0]);
+      var vie = normalizar(par[1]);
+      lista.forEach(function (celda, i) {
+        var clave = claveCelda(celda.lat, celda.lon);
+        cacheMarine[clave] = mar[i] && mar[i].hourly ? mar[i].hourly : null;
+        cacheViento[clave] = vie[i] && vie[i].hourly ? vie[i].hourly : null;
+      });
+      // Instante base: primera hora de la serie devuelta (UTC)
+      var serie = cacheMarine[claveCelda(lista[0].lat, lista[0].lon)] ||
+                  cacheViento[claveCelda(lista[0].lat, lista[0].lon)];
+      t0Serie = Date.parse(serie.time[0] + 'Z');
+
+      // Fallback costero: si la celda redondeada cae en tierra (oleaje todo
+      // null, p.ej. Tipaza), se prueba con celdas vecinas mar adentro.
+      var fallbacks = [];
+      puntosNecesarios().forEach(function (pt) {
+        var clave = claveCelda(pt[0], pt[1]);
+        var serieMar = cacheMarine[clave];
+        var sinDatos = !serieMar || !serieMar.wave_height ||
+          serieMar.wave_height.every(function (v) { return v === null; });
+        if (sinDatos && !fallbacks.some(function (f) { return f.clave === clave; })) {
+          fallbacks.push({ clave: clave, lat: pt[0], lon: pt[1] });
+        }
+      });
+      // Desplazamientos en pasos enteros de celda (la costa argelina está al
+      // sur, asi que se prueba primero mar adentro, hacia el norte)
+      var desplazamientos = [[1, 0], [1, 1], [1, -1], [0, 1],
+                             [0, -1], [-1, 0], [-1, 1], [-1, -1]];
+      return Promise.all(fallbacks.map(function (f) {
+        var intentos = desplazamientos.map(function (d) {
+          var lat = (Math.round(f.lat / CELDA) + d[0]) * CELDA;
+          var lon = (Math.round(f.lon / CELDA) + d[1]) * CELDA;
+          var url = 'https://marine-api.open-meteo.com/v1/marine?latitude=' + lat.toFixed(2) +
+            '&longitude=' + lon.toFixed(2) +
+            '&hourly=wave_height,wave_period,wave_direction,ocean_current_velocity,ocean_current_direction' +
+            '&forecast_days=4&timezone=UTC';
+          return fetch(url).then(function (r) { return r.json(); }).then(function (resp) {
+            if (resp && resp.hourly && resp.hourly.wave_height &&
+                resp.hourly.wave_height.some(function (v) { return v !== null; })) {
+              cacheMarine[f.clave] = resp.hourly;
+              return true;
+            }
+            return false;
+          });
+        });
+        // Secuencial: se detiene en la primera celda vecina con datos
+        return intentos.reduce(function (p, intento) {
+          return p.then(function (encontrado) { return encontrado ? true : intento; });
+        }, Promise.resolve(false));
+      }));
+    });
+  }
+
+  var t0Serie = null;
+
+  function valorEn(serie, campo, idx) {
+    if (!serie || !serie[campo]) return null;
+    var v = serie[campo][idx];
+    return (v === null || v === undefined) ? null : v;
+  }
+
+  // getMeteo(lat, lon, offsetHoras) -> {hs, periodo, vientoKn, vientoDir, corrU, corrV} | null
+  function getMeteo(lat, lon, offsetHoras) {
+    var clave = claveCelda(lat, lon);
+    var mar = cacheMarine[clave];
+    var vie = cacheViento[clave];
+    if (!mar && !vie) return Promise.resolve(null);
+    var idx = Math.round((Date.now() + offsetHoras * 3600e3 - t0Serie) / 3600e3);
+    var n = (mar ? mar.time.length : vie.time.length);
+    if (idx < 0 || idx >= n) return Promise.resolve(null);
+
+    var hs = valorEn(mar, 'wave_height', idx);
+    var vientoKn = valorEn(vie, 'wind_speed_10m', idx);
+    if (hs === null && vientoKn === null) return Promise.resolve(null);
+
+    // Corriente: Open-Meteo devuelve km/h y dirección "hacia"; el motor
+    // espera m/s en componentes U (este) / V (norte).
+    var corrVelKmh = valorEn(mar, 'ocean_current_velocity', idx);
+    var corrDir = valorEn(mar, 'ocean_current_direction', idx);
+    var corrU = 0, corrV = 0;
+    if (corrVelKmh !== null && corrDir !== null) {
+      var velMs = corrVelKmh / 3.6;
+      var r = corrDir * Math.PI / 180;
+      corrU = velMs * Math.sin(r);
+      corrV = velMs * Math.cos(r);
+    }
+
+    return Promise.resolve({
+      hs: hs === null ? Infinity : hs,
+      periodo: valorEn(mar, 'wave_period', idx),
+      vientoKn: vientoKn === null ? Infinity : vientoKn,
+      vientoDir: valorEn(vie, 'wind_direction_10m', idx) || 0,
+      corrU: corrU,
+      corrV: corrV
+    });
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Renderizado
+   * ---------------------------------------------------------------- */
+  function colorScore(score) {
+    // escala sobria: oliva (bajo) -> ámbar (alto)
+    if (score >= 0.66) return '#bf8a3c';
+    if (score >= 0.33) return '#9a8a55';
+    return '#6f7a4e';
+  }
+
+  function pintar(resultado) {
+    capaSalidas.clearLayers();
+    capaCorredores.clearLayers();
+    capaDestinos.clearLayers();
+
+    resultado.salidas.forEach(function (s) {
+      var circ = L.circleMarker([s.lat, s.lon], {
+        radius: 6 + s.scoreVentana * 14,
+        color: '#4a4438',
+        weight: 1,
+        fillColor: colorScore(s.scoreVentana),
+        fillOpacity: 0.65
+      });
+      circ.bindTooltip('<b>' + s.nombre + '</b><br>Score de ventana: ' + s.scoreVentana +
+        '<br>' + s.comentario, { className: 'tooltip-destino' });
+      capaSalidas.addLayer(circ);
+    });
+
+    resultado.corredores.forEach(function (c) {
+      if (!c.activo) return;
+      capaCorredores.addLayer(L.polyline(c.path, {
+        color: c.riesgoDeriva ? '#a94438' : '#57603c',
+        weight: 2,
+        opacity: 0.8,
+        dashArray: c.riesgoDeriva ? '6 8' : null
+      }));
+    });
+
+    resultado.llegadas.forEach(function (l) {
+      var marc = L.circleMarker([l.lat, l.lon], {
+        radius: 9,
+        color: '#3b382e',
+        weight: 1.5,
+        fillColor: COLORES_RAG[l.rag],
+        fillOpacity: 0.9
+      });
+      marc.bindTooltip('<b>' + l.nombre + '</b> — ' + l.rag.toUpperCase() +
+        '<br>p24: ' + l.p24.toFixed(2) + ' · p48: ' + l.p48.toFixed(2) + ' · p72: ' + l.p72.toFixed(2),
+        { className: 'tooltip-destino' });
+      capaDestinos.addLayer(marc);
+    });
+
+    // Panel lateral: semáforo
+    var cont = document.getElementById('semaforo');
+    cont.innerHTML = '';
+    resultado.llegadas.forEach(function (l) {
+      var div = document.createElement('div');
+      div.className = 'isla';
+      div.innerHTML = '<span class="punto-rag rag-' + l.rag + '"></span>' +
+        '<span class="nombre">' + l.nombre + '</span>' +
+        '<span class="probs">24h ' + l.p24.toFixed(2) + ' · 48h ' + l.p48.toFixed(2) +
+        ' · 72h ' + l.p72.toFixed(2) + '</span>';
+      cont.appendChild(div);
+    });
+
+    // Panel lateral: alertas
+    var ul = document.getElementById('alertas');
+    ul.innerHTML = '';
+    if (!resultado.alertas.length) {
+      var li = document.createElement('li');
+      li.textContent = 'Sin avisos: condiciones desfavorables para salidas en el horizonte de 72 h.';
+      ul.appendChild(li);
+    } else {
+      resultado.alertas.forEach(function (a) {
+        var li = document.createElement('li');
+        li.textContent = a;
+        ul.appendChild(li);
+      });
+    }
+
+    document.getElementById('generado').textContent =
+      'Generado: ' + new Date(resultado.generadoEn).toLocaleString('es-ES', { timeZone: 'UTC' }) + ' UTC';
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Ciclo principal
+   * ---------------------------------------------------------------- */
+  function recalcular() {
+    var estado = document.getElementById('estado');
+    estado.textContent = 'Descargando meteo de Open-Meteo (batch por celdas de 0.25°)…';
+    descargarMeteo().then(function () {
+      estado.textContent = 'Calculando predicción…';
+      return PateraEngine.predecir(getMeteo);
+    }).then(function (resultado) {
+      pintar(resultado);
+      estado.textContent = 'Predicción actualizada.';
+    }).catch(function (e) {
+      estado.textContent = 'Error al obtener datos: ' + e.message;
+      console.error(e);
+    });
+  }
+
+  document.getElementById('refrescar').addEventListener('click', recalcular);
+  document.getElementById('capa-salidas').addEventListener('change', function (e) {
+    e.target.checked ? capaSalidas.addTo(mapa) : mapa.removeLayer(capaSalidas);
+  });
+  document.getElementById('capa-corredores').addEventListener('change', function (e) {
+    e.target.checked ? capaCorredores.addTo(mapa) : mapa.removeLayer(capaCorredores);
+  });
+  document.getElementById('capa-destinos').addEventListener('change', function (e) {
+    e.target.checked ? capaDestinos.addTo(mapa) : mapa.removeLayer(capaDestinos);
+  });
+
+  recalcular();
+})();
+</script>
+</body>
+</html>
