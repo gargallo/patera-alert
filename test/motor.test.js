@@ -174,6 +174,35 @@ cadena = cadena.then(function () {
 });
 
 cadena = cadena.then(function () {
+  return test('7. Métricas de ejecución (resultado.metricas)', function () {
+    return PateraEngine.predecir(meteoVentanaParcial, { config: { kSaturacion: 9 } }).then(function (r) {
+      ok(r.metricas && typeof r.metricas === 'object', 'resultado.metricas existe y es un objeto');
+      var campos = ['duracionMs', 'celdasConsultadas', 'meteoNula', 'contribuciones',
+        'corredoresActivos', 'horizonteHoras', 'ventanaMinimaHoras', 'kSaturacion'];
+      var todosPresentes = campos.every(function (c) { return typeof r.metricas[c] === 'number'; });
+      ok(todosPresentes, 'metricas tiene todos los campos numéricos esperados');
+      var totalContrib = r.llegadas.reduce(function (s, l) { return s + l.contribuciones.length; }, 0);
+      ok(r.metricas.contribuciones === totalContrib,
+        'metricas.contribuciones (' + r.metricas.contribuciones + ') coincide con la suma real (' + totalContrib + ')');
+      ok(r.metricas.duracionMs >= 0, 'duracionMs >= 0 (' + r.metricas.duracionMs + ' ms)');
+      ok(r.metricas.celdasConsultadas > 0, 'se consultaron celdas de meteo (' + r.metricas.celdasConsultadas + ')');
+      ok(r.metricas.kSaturacion === 9, 'kSaturacion refleja el override de opciones.config (9)');
+      ok(r.metricas.horizonteHoras === CFG.horizonteHoras &&
+         r.metricas.ventanaMinimaHoras === CFG.ventanaMinimaHoras,
+        'horizonteHoras y ventanaMinimaHoras reflejan los valores por defecto');
+      var camposContrib = totalContrib === 0 || r.llegadas.every(function (l) {
+        return l.contribuciones.every(function (c) {
+          return typeof c.puntoId === 'string' && typeof c.clase === 'string' &&
+            typeof c.horaSalidaH === 'number' && typeof c.horaLlegadaH === 'number' &&
+            typeof c.peso === 'number';
+        });
+      });
+      ok(camposContrib, 'cada contribución consta de puntoId, clase, horaSalidaH, horaLlegadaH y peso');
+    });
+  });
+});
+
+cadena = cadena.then(function () {
   console.log('\n----------------------------------------');
   console.log('Resultado: ' + pasados + ' ok, ' + fallos + ' fallos');
   process.exit(fallos ? 1 : 0);

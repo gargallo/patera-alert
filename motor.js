@@ -232,6 +232,12 @@
     var horizonte = cfg.horizonteHoras;
     var nBuckets = Math.ceil(horizonte / cfg.bucketHoras);
 
+    // Métricas de ejecución (campo aditivo `metricas` del resultado; no
+    // altera el contrato existente: generadoEn/salidas/llegadas/corredores/
+    // alertas se mantienen tal cual).
+    var tInicio = Date.now();
+    var meteoNula = 0;
+
     // Caché interna por punto redondeado y hora: evita multiplicar llamadas
     // al fetcher inyectado (el entorno puede además cachear por celda).
     var cacheMeteo = {};
@@ -239,7 +245,11 @@
       var clave = lat.toFixed(2) + ',' + lon.toFixed(2) + ',' + Math.round(offsetH);
       if (!cacheMeteo[clave]) {
         cacheMeteo[clave] = Promise.resolve(getMeteo(lat, lon, Math.round(offsetH)))
-          .catch(function () { return null; });
+          .catch(function () { return null; })
+          .then(function (m) {
+            if (m === null || m === undefined) meteoNula++;
+            return m === undefined ? null : m;
+          });
       }
       return cacheMeteo[clave];
     }
@@ -460,12 +470,28 @@
         // Ordenar llegadas de mayor a menor p24 para la presentación
         llegadas.sort(function (x, y) { return y.p24 - x.p24; });
 
+        // Métricas de ejecución (aditivo; ver cabecera de predecir)
+        var totalContribuciones = llegadas.reduce(function (s, l) {
+          return s + l.contribuciones.length;
+        }, 0);
+        var metricas = {
+          duracionMs: Date.now() - tInicio,
+          celdasConsultadas: Object.keys(cacheMeteo).length,
+          meteoNula: meteoNula,
+          contribuciones: totalContribuciones,
+          corredoresActivos: corredores.filter(function (c) { return c.activo; }).length,
+          horizonteHoras: cfg.horizonteHoras,
+          ventanaMinimaHoras: cfg.ventanaMinimaHoras,
+          kSaturacion: cfg.kSaturacion
+        };
+
         return {
           generadoEn: new Date().toISOString(),
           salidas: salidas,
           llegadas: llegadas,
           corredores: corredores,
-          alertas: alertas
+          alertas: alertas,
+          metricas: metricas
         };
       });
     });
