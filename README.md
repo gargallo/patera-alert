@@ -15,7 +15,8 @@ patera-alert/
 ├── motor.js            # núcleo puro (browser: global PateraEngine; node: module.exports)
 ├── test/motor.test.js  # tests node con datos sintéticos (sin dependencias)
 ├── demo/index.html     # demo standalone: Leaflet CDN + Open-Meteo en vivo + motor.js
-├── windy/              # plugin Windy v42+ (ver windy/README-windy.md)
+├── windy/              # plugin Windy v42+ (ver windy/README-windy.md); su panel
+│   │                   # incluye configuración persistente, métricas y exportación JSON
 │   ├── pluginConfig.ts
 │   ├── plugin.svelte
 │   ├── package.json / rollup.config.js / tsconfig.json / svelte.config.js
@@ -87,7 +88,9 @@ semaforo RAG por isla (p24): verde < 0.15, ambar 0.15-0.40, rojo > 0.40
 ```
 
 Salida: objeto JSON plano `{ generadoEn, salidas, llegadas, corredores,
-alertas }` (contrato completo en SPEC §3).
+alertas, metricas }` (contrato completo en SPEC §3; `metricas` es un campo
+aditivo con duración del cálculo, celdas consultadas, contribuciones y
+parámetros efectivos).
 
 ## Supuestos y parámetros configurables
 
@@ -152,6 +155,8 @@ es visible de forma permanente en la demo y en el plugin.
    determinista.
 4. Avisos automáticos (email/Telegram) a partir de `alertas` con un cron sobre
    la demo o un worker ligero.
-5. Publicación del plugin Windy (pasos en `windy/README-windy.md`).
+5. Publicación del plugin Windy (pasos en `windy/README-windy.md`). El plugin
+   ya incluye panel de configuración persistente, métricas de ejecución y
+   exportación JSON del resultado para apoyar la validación del punto 1.
 
 > Nota: `demo/` es autocontenida (incluye su propia copia de `motor.js` y Leaflet vendoreado en `demo/vendor/`). Si actualizas el motor, sincroniza la copia: `cp motor.js demo/motor.js`.
